@@ -1,4 +1,8 @@
-NextTrainIntent when is the next train coming?
-NextTrainIntent what's the status at the station?
-NextTrainIntent how long do i have until the next train?
-NextTrainIntent when's the next train?
+OneshotNextTrainIntent when is the next train coming
+OneshotNextTrainIntent when is the next train coming to {Station}
+OneshotNextTrainIntent what's the status at {Station}
+OneshotNextTrainIntent how long do i have until the next train
+OneshotNextTrainIntent how long do i have until the next train at {Station}
+OneshotNextTrainIntent next train
+OneshotNextTrainIntent next train {Station}
+OneshotNextTrainIntent {Station} status
