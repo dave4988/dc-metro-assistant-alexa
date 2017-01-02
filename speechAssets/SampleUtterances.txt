@@ -1,0 +1,4 @@
+NextTrainIntent when is the next train coming?
+NextTrainIntent what's the status at the station?
+NextTrainIntent how long do i have until the next train?
+NextTrainIntent when's the next train?
