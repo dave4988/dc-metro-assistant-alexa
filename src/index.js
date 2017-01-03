@@ -7,6 +7,7 @@ var APP_ID = undefined; //replace with "amzn1.echo-sdk-ams.app.[your-unique-valu
  * The AlexaSkill prototype and helper functions
  */
 var AlexaSkill = require('./AlexaSkill');
+var https = require('https');
 
 /**
  * MetroAssistant is a child of AlexaSkill.
@@ -84,7 +85,7 @@ function handleWelcomeRequest(response) {
             type: AlexaSkill.speechOutputType.PLAIN_TEXT
         },
         repromptOutput = {
-            speech: "I can lead you through providing a station "
+            speech: " I can lead you through providing a station "
                 + "to get information about upcoming trains, "
                 + "or you can simply ask me a question like, "
                 + "ask the metro when the next train to Rosslyn is coming. "
@@ -98,7 +99,7 @@ function handleWelcomeRequest(response) {
 function handleHelpRequest(response) {
     var repromptText = "Which station would you like tide information for?";
     var speechOutput = "You can ask me a question like, "
-        + "when is the next train for Rosslyn coming"
+        + "when is the next train for Rosslyn coming?"
         + repromptText;
 
     response.ask(speechOutput, repromptText);
@@ -107,26 +108,25 @@ function handleHelpRequest(response) {
 function handleOneshotNextTrainRequest(intent, session, response) {
 
     // Determine station. reprompt if not understood
-    var station = getStationFromIntent(intent, true),
+    var station = getStationFromIntent(intent),
         repromptText,
         speechOutput;
-    console.log("station parsed to be " + station);
     if (station.error) {
-        // invalid station. move to the dialog
-        repromptText = "I did not understand the station you requested. "
-            + "Which station would you like train information for?";
+        // invalid station
+        repromptText = "Please try again with a valid station name. Examples are Rosslyn, Chinatown, or Shaw.";
+        speechOutput = station.station ? "I'm sorry, I cannot match your input of " + station.station + " with any current metro station. " + repromptText : repromptText;
         response.ask(speechOutput, repromptText);
         return;
     }
     // all slots filled
-    getFinalNextTrainResponse(station, response);
+    getFinalNextTrainResponse(intent, station, response);
 }
 
 /**
  * Both the one-shot and dialog based paths lead to this method to issue the request, and
  * respond to the user with the final answer.
  */
-function getFinalNextTrainResponse(station, response) {
+function getFinalNextTrainResponse(intent, station, response) {
 
     // Issue the request, and respond to the user
     makeNextTrainRequest(station, function nextTrainResponseCallback(err, nextTrainResponse) {
@@ -134,9 +134,14 @@ function getFinalNextTrainResponse(station, response) {
         if (err) {
             speechOutput = "Sorry, the DC Metro Service is experiencing a problem. Please try again";
         } else {
-            //TODO use actual response data
-            speechOutput = "The next trains are as follows. Blue line train to Largo arrives in 6 minutes. "
-            + "Orange line train to Vienna arrives in 3 minutes";
+            speechOutput = "The next trains arriving at the " + intent.slots.Station.value + " station are as follows. ";
+            var trains = nextTrainResponse.Trains;
+            for (var i=0 ; i < trains.length ; i++) {
+                //TODO add line (it's annoying because its BL instead of blue so will need enum)
+                if (trains[i].Min !== null && trains[i].Min && trains[i].Min !== 'ARR' && trains[i].Min !== 'BRD') {
+                    speechOutput += " Train to " + trains[i].DestinationName + " arriving in " + trains[i].Min + " minutes.";
+                }
+            }
         }
         response.tell(speechOutput);
     });
@@ -144,31 +149,51 @@ function getFinalNextTrainResponse(station, response) {
 
 function makeNextTrainRequest(station, nextTrainResponseCallback) {
     //TODO go to the metro API and get data based on station
-    nextTrainResponseCallback(null, "doesnt matter for now");
+    //TODO store this somewhere that won't get put in github
+    var primaryKey = "8a852881d76b4239a4bb08365b8bd114";
+    var host = 'api.wmata.com';
+    var path = '/StationPrediction.svc/json/GetPrediction/' + station.station
+
+    var options = {
+        host: host,
+        path: path,
+        method: 'GET',
+        headers: {
+            'api_key': primaryKey
+        }
+    }
+
+    callback = function(response) {
+        var responseString = '';
+        response.on('data', function (chunk) {
+            responseString += chunk;
+        });
+        response.on('error', function (e){
+            return nextTrainResponseCallback(new Error(e.message));
+        });
+        //the whole response has been recieved, so we just print it out here
+        response.on('end', function () {
+            var responseJson = JSON.parse(responseString);
+            return nextTrainResponseCallback(null, responseJson);
+        });
+    }
+
+    https.request(options, callback).end();
 }
 
-function getStationFromIntent(intent, assignDefault) {
-
-
-    //TODO i don't think the station fetch is actually working
+function getStationFromIntent(intent) {
+    console.log('made it to the getStationFromIntent');
     var stationSlot = intent.slots.Station;
     // slots can be missing, or slots can be provided but with empty value.
     // must test for both.
+    console.log('the station requested from the intent is ' + intent.slots.Station.value);
     if (!stationSlot || !stationSlot.value) {
-        if (!assignDefault) {
-            return {
-                error: true
-            }
-        } else {
-            // For sample , default to Rosslyn.
-            return {
-                station: STATIONS.Rosslyn
-            }
+        return {
+            error: true
         }
     } else {
         // lookup the station
         var stationName = stationSlot.value;
-        console.log("Station slot parsed to be " + stationName);
         if (STATIONS[stationName.toLowerCase()]) {
             return {
                 station: STATIONS[stationName.toLowerCase()]
@@ -185,99 +210,128 @@ function getStationFromIntent(intent, assignDefault) {
 //TODO change to grab from API. changes so little that it's not worth it now tho
 //found here: https://developer.wmata.com/docs/services/5476364f031f590f38092507/operations/5476364f031f5909e4fe3311
 var STATIONS = {
-    "Metro Center": "A01",
-    "Farragut North": "A02",
-    "Dupont Circle": "A03",
-    "Woodley Park-Zoo/Adams Morgan": "A04",
-    "Cleveland Park": "A05",
-    "Van Ness-UDC": "A06",
-    "Tenleytown-AU": "A07",
-    "Friendship Heights": "A08",
-    "Bethesda": "A09",
-    "Medical Center": "A10",
-    "Grosvenor-Strathmore": "A11",
-    "White Flint": "A12",
-    "Twinbrook": "A13",
-    "Rockville": "A14",
-    "Shady Grove": "A15",
-    "Gallery Pl-Chinatown": "B01",
-    "Judiciary Square": "B02",
-    "Union Station": "B03",
-    "Rhode Island Ave-Brentwood": "B04",
-    "Brookland-CUA": "B05",
-    "Fort Totten": "B06",
-    "Takoma": "B07",
-    "Silver Spring": "B08",
-    "Forest Glen": "B09",
-    "Wheaton": "B10",
-    "Glenmont": "B11",
-    "NoMa-Gallaudet U": "B35",
-    "Metro Center": "C01",
-    "McPherson Square": "C02",
-    "Farragut West": "C03",
-    "Foggy Bottom-GWU": "C04",
+    "metro center": "A01",
+    "farragut north": "A02",
+    "dupont circle": "A03",
+    "woodley park-zoo/adams morgan": "A04",
+    "woodley park": "A04",
+    "adams morgan": "A04",
+    "zoo": "A04",
+    "cleveland Park": "A05",
+    "van ness-udc": "A06",
+    "tenleytown-au": "A07",
+    "tenleytown": "A07",
+    "friendship heights": "A08",
+    "bethesda": "A09",
+    "medical center": "A10",
+    "grosvenor-strathmore": "A11",
+    "grosvenor": "A11",
+    "strathmore": "A11",
+    "white flint": "A12",
+    "twinbrook": "A13",
+    "rockville": "A14",
+    "shady grove": "A15",
+    "gallery pl-chinatown": "B01",
+    "gallery place": "B01",
+    "chinatown": "B01",
+    "judiciary square": "B02",
+    "union station": "B03",
+    "rhode island ave-brentwood": "B04",
+    "rhode island": "B04",
+    "rhode island avanue": "B04",
+    "brentwood": "B04",
+    "brookland-cua": "B05",
+    "brookland": "B05",
+    "fort totten": "B06",
+    "takoma": "B07",
+    "silver spring": "B08",
+    "forest glen": "B09",
+    "wheaton": "B10",
+    "glenmont": "B11",
+    "noma-gallaudet u": "B35",
+    "noma": "B35",
+    "gallaudet": "B35",
+    "metro center": "C01",
+    "mcpherson square": "C02",
+    "mcpherson": "C02",
+    "farragut west": "C03",
+    "foggy bottom": "C04",
     "rosslyn": "C05",
-    "Arlington Cemetery": "C06",
-    "Pentagon": "C07",
-    "Pentagon City": "C08",
-    "Crystal City": "C09",
-    "Ronald Reagan Washington National Airport": "C10",
-    "Braddock Road": "C12",
-    "King St-Old Town": "C13",
-    "Eisenhower Avenue": "C14",
-    "Huntington": "C15",
-    "Federal Triangle": "D01",
-    "Smithsonian": "D02",
-    "L'Enfant Plaza": "D03",
-    "Federal Center SW": "D04",
-    "Capitol South": "D05",
-    "Eastern Market": "D06",
-    "Potomac Ave": "D07",
-    "Stadium-Armory": "D08",
-    "Minnesota Ave": "D09",
-    "Deanwood": "D10",
-    "Cheverly": "D11",
-    "Landover": "D12",
-    "New Carrollton": "D13",
-    "Mt Vernon Sq 7th St-Convention Center": "E01",
-    "Shaw-Howard U": "E02",
-    "U Street/African-Amer Civil War Memorial/Cardozo": "E03",
-    "Columbia Heights": "E04",
-    "Georgia Ave-Petworth": "E05",
-    "Fort Totten": "E06",
-    "West Hyattsville": "E07",
-    "Prince George's Plaza": "E08",
-    "College Park-U of MD": "E09",
-    "Greenbelt": "E10",
-    "Gallery Pl-Chinatown": "F01",
-    "Archives-Navy Memorial-Penn Quarter": "F02",
-    "L'Enfant Plaza": "F03",
-    "Waterfront": "F04",
-    "Navy Yard-Ballpark": "F05",
-    "Anacostia": "F06",
-    "Congress Heights": "F07",
-    "Southern Avenue": "F08",
-    "Naylor Road": "F09",
-    "Suitland": "F10",
-    "Branch Ave": "F11",
-    "Benning Road": "G01",
-    "Capitol Heights": "G02",
-    "Addison Road-Seat Pleasant": "G03",
-    "Morgan Boulevard": "G04",
-    "Largo Town Center": "G05",
-    "Van Dorn Street": "J02",
-    "Franconia-Springfield": "J03",
-    "Court House": "K01",
-    "Clarendon": "K02",
-    "Virginia Square-GMU": "K03",
-    "Ballston-MU": "K04",
-    "East Falls Church": "K05",
-    "West Falls Church-VT/UVA": "K06",
-    "Dunn Loring-Merrifield": "K07",
-    "Vienna/Fairfax-GMU": "K08",
-    "McLean": "N01",
-    "Tysons Corner": "N02",
-    "Greensboro": "N03",
-    "Spring Hill": "N04",
-    "Wiehle-Reston East": "N06" 
+    "arlington cemetery": "C06",
+    "pentagon": "C07",
+    "pentagon city": "C08",
+    "crystal city": "C09",
+    "ronald reagan washington national airport": "C10",
+    "national": "C10",
+    "airport": "C10",
+    "reagan": "C10",
+    "braddock road": "C12",
+    "king st-old town": "C13",
+    "king st": "C13",
+    "old town": "C13",
+    "eisenhower avenue": "C14",
+    "huntington": "C15",
+    "federal triangle": "D01",
+    "smithsonian": "D02",
+    "lenfant Plaza": "D03",
+    "federal center sw": "D04",
+    "federal center": "D04",
+    "capitol south": "D05",
+    "cap south": "D05",
+    "eastern market": "D06",
+    "potomac ave": "D07",
+    "stadium-armory": "D08",
+    "minnesota ave": "D09",
+    "minnesota": "D09",
+    "deanwood": "D10",
+    "cheverly": "D11",
+    "landover": "D12",
+    "new carrollton": "D13",
+    "mount vernon square": "E01",
+    "mount vernon": "E01",
+    "convention center": "E01",
+    "shaw-howard u": "E02",
+    "shaw": "E02",
+    "howard university": "E02",
+    "u street": "E03",
+    "columbia heights": "E04",
+    "georgia ave-petworth": "E05",
+    "georgia ave": "E05",
+    "fort totten": "E06",
+    "west hyattsville": "E07",
+    "prince george's plaza": "E08",
+    "college park-u of md": "E09",
+    "college park": "E09",
+    "greenbelt": "E10",
+    "archives": "F02",
+    "waterfront": "F04",
+    "navy yard": "F05",
+    "anacostia": "F06",
+    "congress heights": "F07",
+    "southern avenue": "F08",
+    "naylor road": "F09",
+    "suitland": "F10",
+    "branch ave": "F11",
+    "benning road": "G01",
+    "capitol heights": "G02",
+    "addison road": "G03",
+    "morgan boulevard": "G04",
+    "largo town center": "G05",
+    "largo": "G05",
+    "van dorn street": "J02",
+    "franconia springfield": "J03",
+    "court house": "K01",
+    "clarendon": "K02",
+    "virginia square": "K03",
+    "ballston": "K04",
+    "east falls church": "K05",
+    "west falls church": "K06",
+    "dunn loring": "K07",
+    "vienna": "K08",
+    "mclean": "N01",
+    "tysons corner": "N02",
+    "greensboro": "N03",
+    "spring hill": "N04",
+    "wiehle-reston": "N06",
+    "wiehle": "N06" 
 };
