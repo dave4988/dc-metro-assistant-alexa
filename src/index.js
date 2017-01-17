@@ -49,8 +49,12 @@ MetroAssistant.prototype.eventHandlers.onSessionEnded = function (sessionEndedRe
 MetroAssistant.prototype.intentHandlers = {
     // register custom intent handlers
     "OneshotNextTrainIntent": function (intent, session, response) {
-        console.log("response: " + handleOneshotNextTrainRequest(intent, session, response));
+        //console.log("response: " + handleOneshotNextTrainRequest(intent, session, response));
         handleOneshotNextTrainRequest(intent, session, response);
+    },
+    "OneshotNextBusIntent": function (intent, session, response) {
+        console.log("response: " + handleOneshotNextBusRequest(intent, session, response));
+        handleOneshotNextBusRequest(intent, session, response);
     },
     "AMAZON.HelpIntent": function (intent, session, response) {
         handleHelpRequest(response);
@@ -79,7 +83,7 @@ exports.handler = function (event, context) {
 */
 
 function handleWelcomeRequest(response) {
-    var whichStationPrompt = "Which station would you like train information for?",
+    var whichStationPrompt = "Which metro station or bus stop would you like train information for?",
         speechOutput = {
             speech: "Welcome to DC Metro Assistant. " + whichStationPrompt,
             type: AlexaSkill.speechOutputType.PLAIN_TEXT
@@ -89,6 +93,10 @@ function handleWelcomeRequest(response) {
                 + "to get information about upcoming trains, "
                 + "or you can simply ask me a question like, "
                 + "ask the metro when the next train to Rosslyn is coming. "
+                + "You can also ask when the next buses are arriving at"
+                + " a particular stop. Right now you must provide the 7-digit"
+                + "ID for bus stop. For example, you could ask: when are"
+                + " the next buses coming to stop 6000702"
                 + whichStationPrompt,
             type: AlexaSkill.speechOutputType.PLAIN_TEXT
         };
@@ -97,9 +105,15 @@ function handleWelcomeRequest(response) {
 }
 
 function handleHelpRequest(response) {
-    var repromptText = "Which station would you like tide information for?";
-    var speechOutput = "You can ask me a question like, "
-        + "when is the next train for Rosslyn coming?"
+    var repromptText = "Which station or stop would you like train or bus information for?";
+    var speechOutput = " I can lead you through providing a station "
+                + "to get information about upcoming trains, "
+                + "or you can simply ask me a question like, "
+                + "ask the metro when the next train to Rosslyn is coming. "
+                + "You can also ask when the next buses are arriving at"
+                + " a particular stop. Right now you must provide the 7-digit"
+                + "ID for bus stop. For example, you could ask: when are"
+                + " the next buses coming to stop 6000702"
         + repromptText;
 
     response.ask(speechOutput, repromptText);
@@ -202,6 +216,111 @@ function getStationFromIntent(intent) {
             return {
                 error: true,
                 station: stationName
+            }
+        }
+    }
+}
+
+function handleOneshotNextBusRequest(intent, session, response) {
+
+    // Determine station. reprompt if not understood
+    var stopID = getStopIDFromIntent(intent),
+        repromptText,
+        speechOutput;
+    if (stopID.error) {
+        // invalid station
+        repromptText = "Please try again with a valid Stop ID. Examples is 6000702";
+        speechOutput = stopID.stopID ? "I'm sorry, I cannot match your input of " + stopID.stopID + " with any current Stop ID. " + repromptText : repromptText;
+        response.ask(speechOutput, repromptText);
+        return;
+    }
+    // all slots filled
+    getFinalNextBusResponse(intent, stopID, response);
+}
+
+/**
+ * Both the one-shot and dialog based paths lead to this method to issue the request, and
+ * respond to the user with the final answer.
+ */
+function getFinalNextBusResponse(intent, stopID, response) {
+
+    // Issue the request, and respond to the user
+    makeNextBusRequest(stopID, function nextBusResponseCallback(err, nextBusResponse) {
+        var speechOutput;
+        if (err) {
+            speechOutput = "Sorry, the DC Metro Service is experiencing a problem. Please try again";
+        } else {
+            speechOutput = "The next buses arriving at the " + intent.slots.StopID.value + " stop are as follows. ";
+            console.log(nextBusResponse);
+            var buses = nextBusResponse.Predictions;
+            for (var i=0 ; i < buses.length ; i++) {
+                speechOutput += " Bus " + buses[i].DirectionText + " arriving in " + buses[i].Minutes + " minutes.";
+            }
+        }
+        response.tell(speechOutput);
+    });
+}
+
+function makeNextBusRequest(stopID, nextBusResponseCallback) {
+    //TODO go to the metro API and get data based on station
+    //TODO store this somewhere that won't get put in github
+    console.log(stopID)
+    var primaryKey = "8a852881d76b4239a4bb08365b8bd114";
+    var host = 'api.wmata.com';
+    var path = '/NextBusService.svc/json/jPredictions?StopID=' + stopID.stopID
+
+    var options = {
+        host: host,
+        path: path,
+        method: 'GET',
+        headers: {
+            'api_key': primaryKey
+        }
+    }
+
+    callback = function(response) {
+        var responseString = '';
+        response.on('data', function (chunk) {
+            responseString += chunk;
+        });
+        response.on('error', function (e){
+            return nextBusResponseCallback(new Error(e.message));
+        });
+        //the whole response has been recieved, so we just print it out here
+        response.on('end', function () {
+            var responseJson = JSON.parse(responseString);
+            return nextBusResponseCallback(null, responseJson);
+        });
+    }
+
+    console.log(host);
+    console.log(path);
+
+    https.request(options, callback).end();
+}
+
+function getStopIDFromIntent(intent) {
+    var stopIDSlot = intent.slots.StopID;
+    // slots can be missing, or slots can be provided but with empty value.
+    // must test for both.
+    console.log('the station requested from the intent is ' + intent.slots.StopID);
+    console.log(stopIDSlot);
+    console.log(stopIDSlot.value);
+    if (!stopIDSlot || !stopIDSlot.value) {
+        return {
+            error: true
+        }
+    } else {
+        // lookup the station
+        var stopID = stopIDSlot.value;
+        if (stopID) {
+            return {
+                stopID: stopID
+            }
+        } else {
+            return {
+                error: true,
+                stopID: stopID
             }
         }
     }

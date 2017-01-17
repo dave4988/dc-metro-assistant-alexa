@@ -6,3 +6,6 @@ OneshotNextTrainIntent how long do i have until the next train at {Station}
 OneshotNextTrainIntent next train
 OneshotNextTrainIntent next train {Station}
 OneshotNextTrainIntent {Station} status
+OneshotNextBusIntent {StopID} status
+OneshotNextBusIntent next bus {StopID}
+OneshotNextBusIntent when are the next buses coming to {StopID}

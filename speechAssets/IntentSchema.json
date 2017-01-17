@@ -10,6 +10,15 @@
       ]
     },
     {
+      "intent": "OneshotNextBusIntent",
+      "slots": [
+        {
+          "name": "StopID",
+          "type": "AMAZON.NUMBER"
+        }
+      ]
+    },
+    {
       "intent": "AMAZON.StopIntent"
     },
     {
